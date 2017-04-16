@@ -28,6 +28,7 @@ from seq2seq.contrib.seq2seq.decoder import _transpose_batch_time
 from seq2seq.data import vocab
 from seq2seq.graph_utils import templatemethod
 from seq2seq.decoders.beam_search_decoder import BeamSearchDecoder
+from seq2seq.decoders.attention_decoder import AttentionDecoderOutput
 from seq2seq.inference import beam_search
 from seq2seq.models.model_base import ModelBase, _flatten_dict
 
@@ -82,7 +83,8 @@ class Seq2SeqModel(ModelBase):
       variables.append(variable)
     return list(zip(clipped_gradients, variables))
 
-  def _create_predictions(self, decoder_output, features, labels, losses=None):
+  def _create_predictions(self, decoder_output, features, labels,
+                          confidences=None, losses=None):
     """Creates the dictionary of predictions that is returned by the model.
     """
     predictions = {}
@@ -94,6 +96,9 @@ class Seq2SeqModel(ModelBase):
 
     if losses is not None:
       predictions["losses"] = _transpose_batch_time(losses)
+
+    if confidences is not None:
+      predictions['confidences'] = confidences
 
     # Decoders returns output in time-major form [T, B, ...]
     # Here we transpose everything back to batch-major for the user
@@ -290,6 +295,12 @@ class Seq2SeqModel(ModelBase):
 
     return losses, loss
 
+  def compute_confidence(self, decoder_output):
+    y = tf.contrib.layers.softmax(
+      logits=decoder_output.logits,
+      scope='softmax')
+    return tf.transpose(tf.reduce_max(y, axis=2))
+
   def _build(self, features, labels, params):
     # Pre-process features and labels
     features, labels = self._preprocess(features, labels)
@@ -298,8 +309,16 @@ class Seq2SeqModel(ModelBase):
     decoder_output, _, = self.decode(encoder_output, features, labels)
 
     if self.mode == tf.contrib.learn.ModeKeys.INFER:
+      if isinstance(decoder_output, AttentionDecoderOutput):
+        confidences = self.compute_confidence(decoder_output)
+      else:
+        confidences = None
+
       predictions = self._create_predictions(
-          decoder_output=decoder_output, features=features, labels=labels)
+        decoder_output=decoder_output,
+        features=features,
+        labels=labels,
+        confidences=confidences)
       loss = None
       train_op = None
     else:

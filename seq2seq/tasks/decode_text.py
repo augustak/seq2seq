@@ -21,6 +21,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import functools
+import operator
 from pydoc import locate
 
 import numpy as np
@@ -147,11 +148,19 @@ class DecodeText(InferenceTask):
     if "attention_scores" in self._predictions:
       fetches["attention_scores"] = self._predictions["attention_scores"]
 
+    if "confidences" in self._predictions:
+      fetches["confidences"] = self._predictions["confidences"]
+
     return tf.train.SessionRunArgs(fetches)
 
   def after_run(self, _run_context, run_values):
     fetches_batch = run_values.results
     for fetches in unbatch_dict(fetches_batch):
+      if 'confidences' in fetches:
+        confidence = functools.reduce(operator.mul, fetches['confidences'], 1)
+      else:
+        confidence = None
+
       # Convert to unicode
       fetches["predicted_tokens"] = np.char.decode(
           fetches["predicted_tokens"].astype("S"), "utf-8")
@@ -185,4 +194,7 @@ class DecodeText(InferenceTask):
 
       sent = sent.strip()
 
-      print(sent)
+      if confidence:
+        print('confidence: {} prediction: {}'.format(round(confidence, 4), sent))
+      else:
+        print(sent)
